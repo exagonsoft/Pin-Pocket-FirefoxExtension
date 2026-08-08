@@ -2,6 +2,14 @@
 
 Save and manage pinned pages directly from Firefox, powered by the [Pinity](https://pinity.uk) platform.
 
+## Repository scope
+
+This folder is an independent Git repository:
+
+- `https://github.com/exagonsoft/Pin-Pocket-FirefoxExtension`
+
+It is intentionally separate from `pinity-server` and other extension repositories.
+
 ## Features
 
 - Pin the current tab from the popup
@@ -44,7 +52,10 @@ Firefox Android support is more limited than desktop, so test the popup flow car
 Edit `constants.js` and update `API_BASE` / `BACKEND_BASE` for your local or tunnel URL:
 
 ```js
-const isDev = !("update_url" in browser.runtime.getManifest());
+const manifest = browser.runtime.getManifest();
+const declaredGeckoId = manifest?.browser_specific_settings?.gecko?.id || "";
+const runtimeId = browser.runtime?.id || "";
+const isDev = !declaredGeckoId || runtimeId !== declaredGeckoId;
 
 export const CONFIG = {
   API_BASE: isDev
@@ -69,7 +80,8 @@ export const CONFIG = {
 ├── manageTeam.html/js   # Team management (Pro/Team plan)
 ├── reset.html/js        # Password reset
 ├── i18n.js              # Internationalization loader
-├── i18n.json            # Translation strings
+├── i18n-data.js         # Translation bundle (generated from i18n.json)
+├── i18n.json            # Translation source
 ├── constants.js         # API URLs (dev vs production)
 ├── styles.css           # Global styles
 └── utils/
