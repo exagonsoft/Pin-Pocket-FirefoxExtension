@@ -4,6 +4,7 @@ import I18N from "./i18n.js";
 import { toast } from "./utils/toast.js";
 import { authFetch } from "./utils/api.js";
 import { CONFIG } from "./constants.js";
+import { logError } from "./logger.js";
 //#endregion
 
 //#region DOM References
@@ -299,7 +300,9 @@ function resolvePlanMeta(plan) {
 
 function resolveFeatureLabel(feature) {
   const raw = String(feature || "").trim();
-  const slug = normalizeSlug(raw);
+  // Convert camelCase to kebab-case before slugifying so "cloudSync" → "cloud-sync"
+  const kebab = raw.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+  const slug = normalizeSlug(kebab);
   const translated = t(`profile.features.${slug}`, {}, "");
   if (translated) return translated;
   if (raw) return t("profile.features.fallback", { feature: raw });
@@ -469,7 +472,7 @@ function updateActionButtons() {
   const selectedPlan = getSelectedPlan();
 
   const hasRealActiveSubscription = Boolean(
-    state.hasSubscription && hasActiveSubscription(),
+    state.hasSubscription && hasActiveSubscription() && state.paypalSubscriptionId,
   );
   const hasPortal = canOpenBillingPortal();
   const selectedBillingPeriod = normalizeBillingPeriod(
@@ -498,7 +501,7 @@ function updateActionButtons() {
   }
 
   const canSubscribe = showSubscribe && selectedHasPriceForPeriod;
-  const canModifyPlan = showModifyPlan;
+  const canModifyPlan = showModifyPlan && selectedHasPriceForPeriod && (hasPortal || canDirectPlanChange());
   const canCancel =
     showCancel && hasRealActiveSubscription && (hasPortal || canDirectCancel());
 
@@ -705,6 +708,24 @@ function buildStoragePayload(source = {}) {
 //#endregion
 
 //#region Feedback And External Navigation
+function setButtonLoading(btn, isLoading) {
+  if (!btn) return;
+  if (isLoading) {
+    btn.dataset.originalText = btn.textContent;
+    btn.disabled = true;
+    btn.classList.add("btn--loading");
+    btn.setAttribute("aria-busy", "true");
+  } else {
+    if (btn.dataset.originalText !== undefined) {
+      btn.textContent = btn.dataset.originalText;
+      delete btn.dataset.originalText;
+    }
+    btn.disabled = false;
+    btn.classList.remove("btn--loading");
+    btn.setAttribute("aria-busy", "false");
+  }
+}
+
 function showToast(method, key, vars = {}) {
   const message = t(key, vars);
   if (!message) return;
@@ -714,11 +735,7 @@ function showToast(method, key, vars = {}) {
 }
 
 function logBillingApiFailure(scope, payload) {
-  try {
-    console.error(`[profile.billing.${scope}] ${JSON.stringify(payload)}`);
-  } catch (_) {
-    console.error(`[profile.billing.${scope}]`, payload);
-  }
+  logError(`profile.billing.${scope}`, "Billing API failure", payload);
 }
 
 function openExternalUrl(url) {
@@ -817,18 +834,42 @@ function renderPlans() {
     meta.textContent = resolvePlanMeta(plan);
 
     const list = document.createElement("ul");
-    const features = Array.isArray(plan.features)
-      ? plan.features.slice(0, 5)
-      : [];
+    list.className = "plan-features";
+
+    const rawFeatures = Array.isArray(plan.features) ? plan.features : [];
+    const features = rawFeatures
+      .map((f) => {
+        if (f && typeof f === "object") {
+          return String(f.key || f.name || f.label || f.id || "").trim();
+        }
+        return String(f || "").trim();
+      })
+      .filter(Boolean);
 
     if (!features.length) {
       const item = document.createElement("li");
-      item.textContent = t("profile.features.unknown");
+      item.className = "plan-feature-item";
+      const icon = document.createElement("span");
+      icon.className = "plan-feature-icon";
+      icon.setAttribute("aria-hidden", "true");
+      const text = document.createElement("span");
+      text.className = "plan-feature-text";
+      text.textContent = t("profile.features.unknown");
+      item.appendChild(icon);
+      item.appendChild(text);
       list.appendChild(item);
     } else {
       features.forEach((feature) => {
         const item = document.createElement("li");
-        item.textContent = resolveFeatureLabel(feature);
+        item.className = "plan-feature-item";
+        const icon = document.createElement("span");
+        icon.className = "plan-feature-icon";
+        icon.setAttribute("aria-hidden", "true");
+        const text = document.createElement("span");
+        text.className = "plan-feature-text";
+        text.textContent = resolveFeatureLabel(feature);
+        item.appendChild(icon);
+        item.appendChild(text);
         list.appendChild(item);
       });
     }
@@ -874,7 +915,7 @@ async function loadPlansFromServer() {
     renderPlans();
     renderBillingState();
   } catch (error) {
-    console.error("Unable to load plans from server", error);
+    logError("profile.planLoad", "Unable to load plans from server", error);
     state.plansLoadedFromBackend = false;
     state.plans = [];
     setPlanStateNote("profile.planState.unavailable", "warn");
@@ -929,7 +970,7 @@ async function syncProfileFromServer() {
     renderPlans();
     renderBillingState();
   } catch (error) {
-    console.error("Unable to sync profile from server", error);
+    logError("profile.serverSync", "Unable to sync profile from server", error);
     state.userLoadedFromBackend = false;
     resetBillingState();
     setActionNote("profile.hints.serverUnavailable", "warn");
@@ -943,7 +984,7 @@ async function updateServerProfile(payload) {
       await setSyncStorage(payload);
       showToast("success", "profile.feedback.savedLocal");
     } catch (error) {
-      console.error("Local profile save failed", error);
+      logError("profile.localSave", "Local profile save failed", error);
       showToast("error", "profile.feedback.failedLocal");
     }
     return;
@@ -969,28 +1010,25 @@ async function updateServerProfile(payload) {
       await setSyncStorage(storagePayload);
       showToast("success", "profile.feedback.saved");
     } catch (storageError) {
-      console.error(
-        "Saved on server but failed local persistence",
-        storageError,
-      );
+      logError("profile.serverSave", "Saved on server but failed local persistence", storageError);
       showToast("warn", "profile.feedback.savedServerLocalFailed");
     }
 
     renderPlans();
     await syncProfileFromServer();
   } catch (error) {
-    console.error("Profile server update failed", error);
+    logError("profile.serverSave", "Profile server update failed", error);
     try {
       await setSyncStorage(payload);
       showToast("warn", "profile.feedback.savedLocalFallback");
     } catch (storageError) {
-      console.error("Profile local fallback failed", storageError);
+      logError("profile.localFallback", "Profile local fallback failed", storageError);
       showToast("error", "profile.feedback.failedServer");
     }
   }
 }
 
-function saveProfile() {
+async function saveProfile() {
   const payload = {
     displayName: displayNameEl ? displayNameEl.value : "",
     profileHandle: handleEl ? handleEl.value : "",
@@ -1028,7 +1066,24 @@ async function openBillingPortal(action = "overview", payload = {}) {
         showToast("error", "profile.feedback.planUnavailable");
         return;
       }
+      if (
+        body?.code === "selected_plan_mismatch" ||
+        body?.code === "target_plan_not_found" ||
+        body?.code === "paypal_plan_period_mismatch"
+      ) {
+        showToast("error", "profile.feedback.planUnavailable");
+        return;
+      }
       throw new Error(body.error || "portal_unavailable");
+    }
+
+    if (body?.checkoutRequired) {
+      if (!body.url) {
+        throw new Error("checkout_unavailable");
+      }
+      openExternalUrl(body.url);
+      showToast("success", "profile.feedback.checkoutOpened");
+      return;
     }
 
     if (action === "upgrade" || action === "downgrade") {
@@ -1044,7 +1099,7 @@ async function openBillingPortal(action = "overview", payload = {}) {
     openExternalUrl(body.url);
     showToast("success", "profile.feedback.portalOpened");
   } catch (error) {
-    console.error("Unable to open billing portal", error);
+    logError("profile.billingPortal", "Unable to open billing portal", error);
     showToast("error", "profile.feedback.portalUnavailable");
   }
 }
@@ -1138,9 +1193,12 @@ async function createSubscriptionSession(plan) {
     renderBillingState();
 
     openExternalUrl(checkoutTarget);
+    window.setTimeout(() => {
+      void syncProfileFromServer();
+    }, 5000);
     showToast("success", "profile.feedback.checkoutOpened");
   } catch (error) {
-    console.error("Unable to start checkout", error);
+    logError("profile.checkout", "Unable to start checkout", error);
     showToast("error", "profile.feedback.checkoutUnavailable");
   }
 }
@@ -1168,12 +1226,19 @@ async function cancelSubscriptionDirectly() {
       }
       throw new Error(body.error || "cancel_failed");
     }
-
-    showToast("success", "profile.feedback.cancelScheduled");
-    await syncProfileFromServer();
   } catch (error) {
-    console.error("Unable to schedule cancellation", error);
+    logError("profile.cancel", "Unable to schedule cancellation", error);
     showToast("error", "profile.feedback.cancelFailed");
+    return;
+  }
+
+  // Cancel succeeded — refresh state separately so a sync failure doesn't
+  // mistakenly show the cancel-failed error toast.
+  showToast("success", "profile.feedback.cancelScheduled");
+  try {
+    await syncProfileFromServer();
+  } catch (syncError) {
+    logError("profile.cancel.sync", "State sync failed after cancel", syncError);
   }
 }
 //#endregion
@@ -1235,9 +1300,14 @@ function showConfirm(titleKey, messageKey, vars = {}) {
 //#region Event Wiring
 function wireActions() {
   if (saveBtn) {
-    saveBtn.addEventListener("click", (event) => {
+    saveBtn.addEventListener("click", async (event) => {
       event.preventDefault();
-      saveProfile();
+      setButtonLoading(saveBtn, true);
+      try {
+        await saveProfile();
+      } finally {
+        setButtonLoading(saveBtn, false);
+      }
     });
   }
 
@@ -1264,7 +1334,12 @@ function wireActions() {
       );
       if (!ok) return;
 
-      await createSubscriptionSession(selectedPlan);
+      setButtonLoading(subscribeBtn, true);
+      try {
+        await createSubscriptionSession(selectedPlan);
+      } finally {
+        setButtonLoading(subscribeBtn, false);
+      }
     });
   }
 
@@ -1306,35 +1381,21 @@ function wireActions() {
       const currentPlanId = currentPlan?._id ? String(currentPlan._id) : "";
       const selectedPlanId = selectedPlan?._id ? String(selectedPlan._id) : "";
       const samePlan = Boolean(currentPlanId && selectedPlanId && currentPlanId === selectedPlanId);
-      const currentBillingPeriod = normalizeBillingPeriod(state.billingPeriod);
-      const sameBillingPeriod = selectedBillingPeriod === currentBillingPeriod;
 
-      // Active subscribers should revise existing PayPal subscription rather than creating a new one.
-      if (canOpenBillingPortal() || canDirectPlanChange()) {
-        if (!samePlan || !sameBillingPeriod) {
-          const currentPrice = getPlanPriceForBillingPeriod(
-            currentPlan,
-            selectedBillingPeriod,
-          );
-          const selectedPrice = getPlanPriceForBillingPeriod(
-            selectedPlan,
-            selectedBillingPeriod,
-          );
-          const action = selectedPrice < currentPrice ? "downgrade" : "upgrade";
-          await openBillingPortal(action, {
-            billingPriceId: selectedBillingPriceId,
-            billingPeriod: selectedBillingPeriod,
-            planId: selectedPlanId,
-          });
-          return;
-        }
-
-        await openBillingPortal("overview");
+      if (samePlan) {
+        showToast("warn", "profile.feedback.actionUnavailable");
         return;
       }
 
-      // Fallback: start a new checkout session (e.g. no active billing subscription)
-      await createSubscriptionSession(selectedPlan);
+      // Active subscribers should revise existing PayPal subscription rather than creating a new one.
+      // Cancel current subscription then open the same checkout flow as subscribe.
+      // The new subscription activation is handled by webhook.
+      setButtonLoading(modifyPlanBtn, true);
+      try {
+        await createSubscriptionSession(selectedPlan);
+      } finally {
+        setButtonLoading(modifyPlanBtn, false);
+      }
     });
   }
 
@@ -1352,17 +1413,20 @@ function wireActions() {
       );
       if (!ok) return;
 
-      if (canOpenBillingPortal()) {
-        await openBillingPortal("cancel");
-        return;
+      setButtonLoading(cancelBtn, true);
+      try {
+        if (canOpenBillingPortal()) {
+          await openBillingPortal("cancel");
+          return;
+        }
+        if (canDirectCancel()) {
+          await cancelSubscriptionDirectly();
+          return;
+        }
+        showToast("error", "profile.feedback.portalUnavailable");
+      } finally {
+        setButtonLoading(cancelBtn, false);
       }
-
-      if (canDirectCancel()) {
-        await cancelSubscriptionDirectly();
-        return;
-      }
-
-      showToast("error", "profile.feedback.portalUnavailable");
     });
   }
 
@@ -1442,7 +1506,7 @@ chrome.storage.local.get(["language", "languagePreference"], (result) => {
       loadProfile();
     })
     .catch((error) => {
-      console.error("Failed loading profile i18n", error);
+      logError("profile.i18n", "Failed loading profile i18n", error);
       wireActions();
       loadProfile();
     });

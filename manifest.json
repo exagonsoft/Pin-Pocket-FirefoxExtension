@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PinitY",
-    "version": "2.0.4",
+    "version": "2.0.6",
     "description": "Save and manage pinned pages.",
     "browser_specific_settings": {
         "gecko": {
@@ -16,8 +16,7 @@
         "extension_pages": "script-src 'self'; object-src 'self'"
     },
     "host_permissions": [
-        "https://pinity.uk/*",
-        "https://*.devtunnels.ms/*"
+        "https://pinity.uk/*"
     ],
     "permissions": [
         "tabs",
@@ -29,7 +28,7 @@
     "web_accessible_resources": [
         {
             "resources": ["icons/*.png", "icons/*.ico", "i18n.json"],
-            "matches": ["<all_urls>"]
+            "matches": ["https://pinity.uk/*"]
         }
     ],
     "background": {

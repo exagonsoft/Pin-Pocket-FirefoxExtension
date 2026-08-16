@@ -4,6 +4,7 @@ import { authFetch } from "./utils/api.js";
 import { toast } from "./utils/toast.js";
 import * as Storage from "./utils/storage.js";
 import I18N from "./i18n.js";
+import { logError } from "./logger.js";
 //#endregion
 
 //#region DOM References
@@ -96,7 +97,7 @@ function renderMembers(members, ownerId) {
           toast.success(t('manageTeam.members.removeSuccess', 'Member removed.'));
           await reloadCurrentTeam();
         } catch (err) {
-          console.error('Failed to remove member:', err);
+          logError("manageTeam.removeMember", "Failed to remove member", err);
           toast.error(t('manageTeam.members.removeFailed', 'Failed to remove member.'));
         }
       });
@@ -166,7 +167,7 @@ async function loadPendingInvites() {
           toast.success(t('manageTeam.pendingInvites.revokeSuccess', 'Invite revoked.'));
           await loadPendingInvites();
         } catch (err) {
-          console.error('Revoke invite error:', err);
+          logError("manageTeam.revokeInvite", "Revoke invite error", err);
           toast.error(t('manageTeam.pendingInvites.revokeFailed', 'Failed to revoke invite.'));
         }
       });
@@ -175,7 +176,7 @@ async function loadPendingInvites() {
       pendingList.appendChild(li);
     });
   } catch (err) {
-    console.error('Failed to load pending invites:', err);
+    logError("manageTeam.loadInvites", "Failed to load pending invites", err);
     const li = document.createElement('li');
     li.className = 'list-item list-item--muted';
     li.textContent = t('manageTeam.pendingInvites.loadFailed', 'Could not load pending invites.');
@@ -260,7 +261,7 @@ async function loadTeams(userId) {
       }
     }
   } catch (err) {
-    console.error('Failed to load teams:', err);
+    logError("manageTeam.loadTeams", "Failed to load teams", err);
     renderMembers([], null);
   }
 }
@@ -316,7 +317,7 @@ inviteForm?.addEventListener('submit', async (event) => {
     toast.success(t('manageTeam.inviteSuccess', 'Invitation sent.'));
     await loadPendingInvites();
   } catch (err) {
-    console.error('Invite error:', err);
+    logError("manageTeam.invite", "Invite error", err);
     toast.error(t('manageTeam.inviteFailed', 'Failed to send invite.'));
   }
 });
@@ -348,7 +349,7 @@ renameButton?.addEventListener('click', async () => {
     await reloadCurrentTeam();
     toast.success('Team renamed.');
   } catch (err) {
-    console.error('Rename error:', err);
+    logError("manageTeam.rename", "Rename error", err);
     toast.error('Could not rename the team. Please try again.');
   }
 });
@@ -377,7 +378,7 @@ deleteTeamButton?.addEventListener('click', async () => {
     await loadTeams(currentUserId);
     toast.success('Team deleted.');
   } catch (err) {
-    console.error('Delete error:', err);
+    logError("manageTeam.delete", "Delete error", err);
     toast.error('Could not delete the team. Please try again.');
   }
 });
@@ -405,7 +406,7 @@ createTeamButton?.addEventListener('click', async () => {
     await loadTeams(currentUserId);
     toast.success(t('manageTeam.teamCreated', 'Team created successfully.'));
   } catch (err) {
-    console.error('Create team error:', err);
+    logError("manageTeam.createTeam", "Create team error", err);
     toast.error(t('manageTeam.createFailed', 'Could not create the team. Please try again.'));
   }
 });
@@ -417,7 +418,7 @@ async function init() {
     const stored = await Storage.get(["userId"]);
     currentUserId = stored?.userId || null;
   } catch (err) {
-    console.error('Unable to read user from storage:', err);
+    logError("manageTeam.loadUser", "Unable to read user from storage", err);
   }
 
   if (!currentUserId) {
